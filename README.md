@@ -1,680 +1,151 @@
-semver(1) -- The semantic versioner for npm
-===========================================
+# subproof
 
-## Install
+判断一个 semver 范围是否**完整落在**另一个范围里；答案是否定时，给出一个**具体的反例版本**。
+
+基于 [`npm/node-semver`](https://github.com/npm/node-semver) 7.8.5（ISC），保留完整上游历史。
+上游的 `ranges/subset.js` 一行未动；本项目新增一个与之并列的精确判定器 `ranges/exact-subset.js`。
+
+```
+$ npx subproof ">=1 <3" ">=1 <2 || >=2 <3"
+✓ subset
+  sub: >=1 <3
+  dom: >=1 <2 || >=2 <3
+  38 boundary version(s) checked
+
+$ npx subproof ">=1 <2 || >=2 <3" ">=1 <3"     # 反向
+✗ not a subset
+  counterexample: 3.0.0
+```
+
+## 为什么需要它
+
+`semver.subset(a, b)` 已经存在于上游，绝大多数情况下是对的：**在 182,492 次真实依赖声明的比较中，一致率 99.991%**。
+剩下的 0.009% 集中在四类写法上，且全部是「漏判」（说不是子集，其实是）：
+
+| 类型 | 真实案例（来自真实 package.json） | 上游 7.8.5 | 真实语义 |
+|---|---|---|---|
+| 多分支并集覆盖 | `>=7.0.0` ⊆ `^6.0.0 \|\| ^7.0.0 \|\| >=8.0.0` | `false` | `true` |
+| 通配符左界 | `0` ⊆ `*`（真实 `istanbul` 声明） | `false` | `true` |
+| 零主版本 caret | `^0.0.8` ⊆ `0.0.8`（真实 `sse`／`faucet` 声明） | `false` | `true` |
+| 上界写法等价 | `>= 2.1.2 < 3.0.0` ⊆ `>= 2.1.2 < 3` | `false` | `true` |
+
+上游判定是启发式：把每个 AND 组压成一个区间后逐条比对（`ranges/subset.js:9-43` 的注释就是这份规则表），
+因此它无法表达「B 的多个分支拼起来刚好盖住 A」，以及「所有版本都不小于 0.0.0」这类事实。
+上游仓库当前有 **5 个未合并的 subset 修复 PR**（#703 / #854 / #889 / #894 / #896 / #911 / #919），方向与本项目一致。
+
+本项目的取舍是：**不修改上游的 `subset()`**，另外提供一个可以自证正确的判定器，并把「上游会判错」这件事写成回归测试。
+修复上游是上游的事；使用者需要的是拿到正确结论和反例。
+
+## 判定方式
+
+`satisfies(v, range)` 的真值只依赖三件事：
+
+1. `v` 的 `(major,minor,patch)` 是否与某个常量相同；
+2. `v` 与常量集合中每个版本的 `compare()` 符号；
+3. 三元组相同时，`v.prerelease` 与该常量 `prerelease` 的符号。
+
+所以整个版本空间可以按常量划分成有限个等价类，**每类取一个代表版本逐点验证**即可。
+`ranges/exact-subset.js` 生成判别点网格：
+
+- 每个常量三元组本身，以及它的前后相邻三元组（`p-1`、`p+1`、`m+1.0`、`M+1.0.0`、`M.0.0`）；
+- 每个三元组在 prerelease 轴上的代表：最小（`-0`）、最大（`-zzz`）、每个切点、每个切点的**直接后继**（`alpha` → `alpha.0`）；
+- 全局最小 `0.0.0-0` 与一个高于所有常量的哨兵。
+
+判定结果同时给出反例，反例可以直接用 `satisfies()` 复核。这比「返回一个布尔值」更有用：
+审计场景里你需要知道**到底哪个版本不在范围内**。
+
+## 安装
 
 ```bash
-npm install semver
-````
+npm install github:llinok111/subproof
+```
 
-## Usage
+包名是 `subproof`（不是 `semver`），不会覆盖你项目里已有的官方 `semver`。
+`require('subproof')` 与官方 `semver` 的 API 完全一致，新增能力在 `subproof/ranges/exact-subset`。
 
-As a node module:
+## CLI
+
+```
+subproof <sub> <dom>              判定；退出码 0 = 是子集，1 = 不是，2 = 用法/解析错误
+subproof --compare <old> <new>    两个范围之间的关系
+选项
+  --json                机器可读输出
+  --include-prerelease  同 semver 的 options.includePrerelease
+  -h, --help  -v, --version
+```
+
+`--compare` 的关系判定与退出码：
+
+| relation | 含义 | 退出码 |
+|---|---|---|
+| `equal` | 两个范围等价 | 0 |
+| `narrowing` | 新范围收紧，输出被排除的版本 | 0 |
+| `widening` | 新范围放宽，输出新接受的版本 | 1 |
+| `incomparable` | 互不包含，两侧各输出一个版本 | 1 |
+
+```bash
+$ subproof --compare ">=1.0.0" "^1.2.3"
+< narrowing
+  old: >=1.0.0
+  new: ^1.2.3
+  newly excluded version: 1.0.0
+```
+
+适合放进 CI 当门禁：`subproof --compare "$OLD" "$NEW" || exit 1`（依赖范围被放宽时失败）。
+
+## API
 
 ```js
-const semver = require('semver')
+const exactSubset = require('subproof/ranges/exact-subset')
 
-semver.valid('1.2.3') // '1.2.3'
-semver.valid('a.b.c') // null
-semver.clean('  =v1.2.3   ') // '1.2.3'
-semver.satisfies('1.2.3', '1.x || >=2.5.0 || 5.0.0 - 7.2.3') // true
-semver.gt('1.2.3', '9.8.7') // false
-semver.lt('1.2.3', '9.8.7') // true
-semver.minVersion('>=1.0.0') // '1.0.0'
-semver.valid(semver.coerce('v2')) // '2.0.0'
-semver.valid(semver.coerce('42.6.7.9.3-alpha')) // '42.6.7'
+exactSubset('>=1 <3', '>=1 <2 || >=2 <3')          // true
+exactSubset('^1.2.3', '>=1.2.3 <2.0.0')            // true（等价写法）
+exactSubset('1.2.3-alpha', '<=3.0.0')              // false（prerelease 不属于 release 范围）
+
+exactSubset.explainSubset('>=1.0.0', '>=1.0.0 <2.0.0')
+// { subset: false, witness: '2.0.0', sub, dom, points: 11 }
+
+exactSubset.discriminators(rangeA, rangeB)         // 判别点列表（审计用：到底比了哪些版本）
 ```
 
-You can also just load the module for the function that you care about if
-you'd like to minimize your footprint.
-
-```js
-// load the whole API at once in a single object
-const semver = require('semver')
-
-// or just load the bits you need
-// all of them listed here, just pick and choose what you want
-
-// classes
-const SemVer = require('semver/classes/semver')
-const Comparator = require('semver/classes/comparator')
-const Range = require('semver/classes/range')
-
-// functions for working with versions
-const semverParse = require('semver/functions/parse')
-const semverValid = require('semver/functions/valid')
-const semverClean = require('semver/functions/clean')
-const semverInc = require('semver/functions/inc')
-const semverDiff = require('semver/functions/diff')
-const semverMajor = require('semver/functions/major')
-const semverMinor = require('semver/functions/minor')
-const semverPatch = require('semver/functions/patch')
-const semverPrerelease = require('semver/functions/prerelease')
-const semverCompare = require('semver/functions/compare')
-const semverRcompare = require('semver/functions/rcompare')
-const semverCompareLoose = require('semver/functions/compare-loose')
-const semverCompareBuild = require('semver/functions/compare-build')
-const semverSort = require('semver/functions/sort')
-const semverRsort = require('semver/functions/rsort')
-const semverTruncate = require('semver/functions/truncate')
-
-// low-level comparators between versions
-const semverGt = require('semver/functions/gt')
-const semverLt = require('semver/functions/lt')
-const semverEq = require('semver/functions/eq')
-const semverNeq = require('semver/functions/neq')
-const semverGte = require('semver/functions/gte')
-const semverLte = require('semver/functions/lte')
-const semverCmp = require('semver/functions/cmp')
-const semverCoerce = require('semver/functions/coerce')
-
-// working with ranges
-const semverSatisfies = require('semver/functions/satisfies')
-const semverMaxSatisfying = require('semver/ranges/max-satisfying')
-const semverMinSatisfying = require('semver/ranges/min-satisfying')
-const semverToComparators = require('semver/ranges/to-comparators')
-const semverMinVersion = require('semver/ranges/min-version')
-const semverValidRange = require('semver/ranges/valid')
-const semverOutside = require('semver/ranges/outside')
-const semverGtr = require('semver/ranges/gtr')
-const semverLtr = require('semver/ranges/ltr')
-const semverIntersects = require('semver/ranges/intersects')
-const semverSimplifyRange = require('semver/ranges/simplify')
-const semverRangeSubset = require('semver/ranges/subset')
-```
-
-As a command-line utility:
-
-```
-$ semver -h
-
-A JavaScript implementation of the https://semver.org/ specification
-Copyright Isaac Z. Schlueter
-
-Usage: semver [options] <version> [<version> [...]]
-Prints valid versions sorted by SemVer precedence
-
-Options:
--r --range <range>
-        Print versions that match the specified range.
-
--i --increment [<level>]
-        Increment a version by the specified level.  Level can
-        be one of: major, minor, patch, premajor, preminor,
-        prepatch, prerelease, or release.  Default level is 'patch'.
-        Only one version may be specified.
-
---preid <identifier>
-        Identifier to be used to prefix premajor, preminor,
-        prepatch or prerelease version increments.
-
--l --loose
-        Interpret versions and ranges loosely
-
--n <0|1|false>
-        Base number for prerelease identifier (default: 0).
-        Use false to omit the number altogether.
-
--p --include-prerelease
-        Always include prerelease versions in range matching
-
--c --coerce
-        Coerce a string into SemVer if possible
-        (does not imply --loose)
-
---rtl
-        Coerce version strings right to left
-
---ltr
-        Coerce version strings left to right (default)
-
-Program exits successfully if any valid version satisfies
-all supplied ranges, and prints all satisfying versions.
-
-If no satisfying versions are found, then exits failure.
-
-Versions are printed in ascending order, so supplying
-multiple versions to the utility will just sort them.
-```
-
-## Versions
-
-A "version" is described by the `v2.0.0` specification found at
-<https://semver.org/>.
-
-A leading `"="` or `"v"` character is stripped off and ignored.
-Support for stripping a leading "v" is kept for compatibility with `v1.0.0` of the SemVer
-specification but should not be used anymore.
-
-## Ranges
-
-A `version range` is a set of `comparators` that specify versions
-that satisfy the range.
-
-A `comparator` is composed of an `operator` and a `version`.  The set
-of primitive `operators` is:
-
-* `<` Less than
-* `<=` Less than or equal to
-* `>` Greater than
-* `>=` Greater than or equal to
-* `=` Equal.  If no operator is specified, then equality is assumed,
-  so this operator is optional but MAY be included.
-
-For example, the comparator `>=1.2.7` would match the versions
-`1.2.7`, `1.2.8`, `2.5.3`, and `1.3.9`, but not the versions `1.2.6`
-or `1.1.0`. The comparator `>1` is equivalent to `>=2.0.0` and
-would match the versions `2.0.0` and `3.1.0`, but not the versions
-`1.0.1` or `1.1.0`.
-
-Comparators can be joined by whitespace to form a `comparator set`,
-which is satisfied by the **intersection** of all of the comparators
-it includes.
-
-A range is composed of one or more comparator sets, joined by `||`.  A
-version matches a range if and only if every comparator in at least
-one of the `||`-separated comparator sets is satisfied by the version.
-
-For example, the range `>=1.2.7 <1.3.0` would match the versions
-`1.2.7`, `1.2.8`, and `1.2.99`, but not the versions `1.2.6`, `1.3.0`,
-or `1.1.0`.
-
-The range `1.2.7 || >=1.2.9 <2.0.0` would match the versions `1.2.7`,
-`1.2.9`, and `1.4.6`, but not the versions `1.2.8` or `2.0.0`.
-
-### Prerelease Tags
-
-If a version has a prerelease tag (for example, `1.2.3-alpha.3`) then
-it will only be allowed to satisfy comparator sets if at least one
-comparator with the same `[major, minor, patch]` tuple also has a
-prerelease tag.
-
-For example, the range `>1.2.3-alpha.3` would be allowed to match the
-version `1.2.3-alpha.7`, but it would *not* be satisfied by
-`3.4.5-alpha.9`, even though `3.4.5-alpha.9` is technically "greater
-than" `1.2.3-alpha.3` according to the SemVer sort rules.  The version
-range only accepts prerelease tags on the `1.2.3` version.
-Version `3.4.5` *would* satisfy the range because it does not have a
-prerelease flag, and `3.4.5` is greater than `1.2.3-alpha.7`.
-
-The purpose of this behavior is twofold.  First, prerelease versions
-frequently are updated very quickly, and contain many breaking changes
-that are (by the author's design) not yet fit for public consumption.
-Therefore, by default, they are excluded from range-matching
-semantics.
-
-Second, a user who has opted into using a prerelease version has
-indicated the intent to use *that specific* set of
-alpha/beta/rc versions.  By including a prerelease tag in the range,
-the user is indicating that they are aware of the risk.  However, it
-is still not appropriate to assume that they have opted into taking a
-similar risk on the *next* set of prerelease versions.
-
-Note that this behavior can be suppressed (treating all prerelease
-versions as if they were normal versions, for range-matching)
-by setting the `includePrerelease` flag on the options
-object to any
-[functions](https://github.com/npm/node-semver#functions) that do
-range matching.
-
-#### Prerelease Identifiers
-
-The method `.inc` takes an additional `identifier` string argument that
-will append the value of the string as a prerelease identifier:
-
-```javascript
-semver.inc('1.2.3', 'prerelease', 'beta')
-// '1.2.4-beta.0'
-```
-
-command-line example:
-
-```bash
-$ semver 1.2.3 -i prerelease --preid beta
-1.2.4-beta.0
-```
-
-Which then can be used to increment further:
-
-```bash
-$ semver 1.2.4-beta.0 -i prerelease
-1.2.4-beta.1
-```
-
-To get out of the prerelease phase, use the `release` option:
-
-```bash
-$ semver 1.2.4-beta.1 -i release
-1.2.4
-```
-
-#### Prerelease Identifier Base
-
-The method `.inc` takes an optional parameter 'identifierBase' string
-that will let you let your prerelease number as zero-based or one-based.
-Set to `false` to omit the prerelease number altogether.
-If you do not specify this parameter, it will default to zero-based.
-
-```javascript
-semver.inc('1.2.3', 'prerelease', 'beta', '1')
-// '1.2.4-beta.1'
-```
-
-```javascript
-semver.inc('1.2.3', 'prerelease', 'beta', false)
-// '1.2.4-beta'
-```
-
-command-line example:
-
-```bash
-$ semver 1.2.3 -i prerelease --preid beta -n 1
-1.2.4-beta.1
-```
-
-```bash
-$ semver 1.2.3 -i prerelease --preid beta -n false
-1.2.4-beta
-```
-
-### Advanced Range Syntax
-
-Advanced range syntax desugars to primitive comparators in
-deterministic ways.
-
-Advanced ranges may be combined in the same way as primitive
-comparators using white space or `||`.
-
-#### Hyphen Ranges `X.Y.Z - A.B.C`
-
-Specifies an inclusive set.
-
-* `1.2.3 - 2.3.4` := `>=1.2.3 <=2.3.4`
-
-If a partial version is provided as the first version in the inclusive
-range, then the missing pieces are replaced with zeroes.
-
-* `1.2 - 2.3.4` := `>=1.2.0 <=2.3.4`
-
-If a partial version is provided as the second version in the
-inclusive range, then all versions that start with the supplied parts
-of the tuple are accepted, but nothing that would be greater than the
-provided tuple parts.
-
-* `1.2.3 - 2.3` := `>=1.2.3 <2.4.0-0`
-* `1.2.3 - 2` := `>=1.2.3 <3.0.0-0`
-
-#### X-Ranges `1.2.x` `1.X` `1.2.*` `*`
-
-Any of `X`, `x`, or `*` may be used to "stand in" for one of the
-numeric values in the `[major, minor, patch]` tuple.
-
-* `*` := `>=0.0.0` (Any non-prerelease version satisfies, unless
-  `includePrerelease` is specified, in which case any version at all
-  satisfies)
-* `1.x` := `>=1.0.0 <2.0.0-0` (Matching major version)
-* `1.2.x` := `>=1.2.0 <1.3.0-0` (Matching major and minor versions)
-
-A partial version range is treated as an X-Range, so the special
-character is in fact optional.
-
-* `""` (empty string) := `*` := `>=0.0.0`
-* `1` := `1.x.x` := `>=1.0.0 <2.0.0-0`
-* `1.2` := `1.2.x` := `>=1.2.0 <1.3.0-0`
-
-#### Tilde Ranges `~1.2.3` `~1.2` `~1`
-
-Allows patch-level changes if a minor version is specified on the
-comparator.  Allows minor-level changes if not.
-
-* `~1.2.3` := `>=1.2.3 <1.(2+1).0` := `>=1.2.3 <1.3.0-0`
-* `~1.2` := `>=1.2.0 <1.(2+1).0` := `>=1.2.0 <1.3.0-0` (Same as `1.2.x`)
-* `~1` := `>=1.0.0 <(1+1).0.0` := `>=1.0.0 <2.0.0-0` (Same as `1.x`)
-* `~0.2.3` := `>=0.2.3 <0.(2+1).0` := `>=0.2.3 <0.3.0-0`
-* `~0.2` := `>=0.2.0 <0.(2+1).0` := `>=0.2.0 <0.3.0-0` (Same as `0.2.x`)
-* `~0` := `>=0.0.0 <(0+1).0.0` := `>=0.0.0 <1.0.0-0` (Same as `0.x`)
-* `~1.2.3-beta.2` := `>=1.2.3-beta.2 <1.3.0-0` Note that prereleases in
-  the `1.2.3` version will be allowed, if they are greater than or
-  equal to `beta.2`.  So, `1.2.3-beta.4` would be allowed, but
-  `1.2.4-beta.2` would not, because it is a prerelease of a
-  different `[major, minor, patch]` tuple.
-
-#### Caret Ranges `^1.2.3` `^0.2.5` `^0.0.4`
-
-Allows changes that do not modify the left-most non-zero element in the
-`[major, minor, patch]` tuple.  In other words, this allows patch and
-minor updates for versions `1.0.0` and above, patch updates for
-versions `0.X >=0.1.0`, and *no* updates for versions `0.0.X`.
-
-Many authors treat a `0.x` version as if the `x` were the major
-"breaking-change" indicator.
-
-Caret ranges are ideal when an author may make breaking changes
-between `0.2.4` and `0.3.0` releases, which is a common practice.
-However, it presumes that there will *not* be breaking changes between
-`0.2.4` and `0.2.5`.  It allows for changes that are presumed to be
-additive (but non-breaking), according to commonly observed practices.
-
-* `^1.2.3` := `>=1.2.3 <2.0.0-0`
-* `^0.2.3` := `>=0.2.3 <0.3.0-0`
-* `^0.0.3` := `>=0.0.3 <0.0.4-0`
-* `^1.2.3-beta.2` := `>=1.2.3-beta.2 <2.0.0-0` Note that prereleases in
-  the `1.2.3` version will be allowed, if they are greater than or
-  equal to `beta.2`.  So, `1.2.3-beta.4` would be allowed, but
-  `1.2.4-beta.2` would not, because it is a prerelease of a
-  different `[major, minor, patch]` tuple.
-* `^0.0.3-beta` := `>=0.0.3-beta <0.0.4-0`  Note that prereleases in the
-  `0.0.3` version *only* will be allowed, if they are greater than or
-  equal to `beta`.  So, `0.0.3-pr.2` would be allowed.
-
-When parsing caret ranges, a missing `patch` value desugars to the
-number `0`, but will allow flexibility within that value, even if the
-major and minor versions are both `0`.
-
-* `^1.2.x` := `>=1.2.0 <2.0.0-0`
-* `^0.0.x` := `>=0.0.0 <0.1.0-0`
-* `^0.0` := `>=0.0.0 <0.1.0-0`
-
-A missing `minor` and `patch` values will desugar to zero, but also
-allow flexibility within those values, even if the major version is
-zero.
-
-* `^1.x` := `>=1.0.0 <2.0.0-0`
-* `^0.x` := `>=0.0.0 <1.0.0-0`
-
-### Range Grammar
-
-Putting all this together, here is a Backus-Naur grammar for ranges,
-for the benefit of parser authors:
-
-```bnf
-range-set  ::= range ( logical-or range ) *
-logical-or ::= ( ' ' ) * '||' ( ' ' ) *
-range      ::= hyphen | simple ( ' ' simple ) * | ''
-hyphen     ::= partial ' - ' partial
-simple     ::= primitive | partial | tilde | caret
-primitive  ::= ( '<' | '>' | '>=' | '<=' | '=' ) partial
-partial    ::= xr ( '.' xr ( '.' xr qualifier ? )? )?
-xr         ::= 'x' | 'X' | '*' | nr
-nr         ::= '0' | ['1'-'9'] ( ['0'-'9'] ) *
-tilde      ::= '~' partial
-caret      ::= '^' partial
-qualifier  ::= ( '-' pre )? ( '+' build )?
-pre        ::= prepart ( '.' prepart ) *
-prepart    ::= nr | alphanumid
-build      ::= buildid ( '.' buildid ) *
-alphanumid ::= ( ['0'-'9'] ) * [-A-Za-z] [-0-9A-Za-z] *
-buildid    ::= [-0-9A-Za-z]+
-```
-
-Note: Prerelease identifiers (`pre`) use `nr` for numeric parts, which
-disallows leading zeros (e.g., `1.2.3-00` is invalid). Build metadata
-identifiers (`build`) allow any alphanumeric string including leading
-zeros (e.g., `1.2.3+00` is valid). This matches the
-[SemVer 2.0.0 specification](https://semver.org/#spec-item-9).
-
-## Functions
-
-All methods and classes take a final `options` object argument.  All
-options in this object are `false` by default.  The options supported
-are:
-
-- `loose`: Be more forgiving about not-quite-valid semver strings.
-  (Any resulting output will always be 100% strict compliant, of
-  course.)  For backwards compatibility reasons, if the `options`
-  argument is a boolean value instead of an object, it is interpreted
-  to be the `loose` param.
-- `includePrerelease`: Set to suppress the [default
-  behavior](https://github.com/npm/node-semver#prerelease-tags) of
-  excluding prerelease tagged versions from ranges unless they are
-  explicitly opted into.
-
-Strict-mode Comparators and Ranges will be strict about the SemVer
-strings that they parse.
-
-* `valid(v)`: Return the parsed version, or null if it's not valid.
-* `inc(v, releaseType, options, identifier, identifierBase)`: 
-  Return the version incremented by the release
-  type (`major`, `premajor`, `minor`, `preminor`, `patch`,
-  `prepatch`, `prerelease`, or `release`), or null if it's not valid
-  * `premajor` in one call will bump the version up to the next major
-    version and down to a prerelease of that major version.
-    `preminor`, and `prepatch` work the same way.
-  * If called from a non-prerelease version, `prerelease` will work the
-    same as `prepatch`. It increments the patch version and then makes a
-    prerelease. If the input version is already a prerelease it simply
-    increments it.
-  * `release` will remove any prerelease part of the version.
-  * `identifier` can be used to prefix `premajor`, `preminor`,
-    `prepatch`, or `prerelease` version increments. `identifierBase`
-    is the base to be used for the `prerelease` identifier.
-* `prerelease(v)`: Returns an array of prerelease components, or null
-  if none exist. Example: `prerelease('1.2.3-alpha.1') -> ['alpha', 1]`
-* `major(v)`: Return the major version number.
-* `minor(v)`: Return the minor version number.
-* `patch(v)`: Return the patch version number.
-* `intersects(r1, r2, loose)`: Return true if the two supplied ranges
-  or comparators intersect.
-* `parse(v)`: Attempt to parse a string as a semantic version, returning either
-  a `SemVer` object or `null`.
-* `truncate(v, releaseType)`: Return the version with components _lower_
-  than `releaseType` dropped off, e.g.:
-  * `major` removes build & prerelease info and sets minor & patch to 0.
-  * `minor` removes build & prerelease info, and sets patch to 0
-  * `patch` removes build & prerelease info
-  * All prerelease types remove build info only
-
-### Comparison
-
-* `gt(v1, v2)`: `v1 > v2`
-* `gte(v1, v2)`: `v1 >= v2`
-* `lt(v1, v2)`: `v1 < v2`
-* `lte(v1, v2)`: `v1 <= v2`
-* `eq(v1, v2)`: `v1 == v2` This is true if they're logically equivalent,
-  even if they're not the same string.  You already know how to
-  compare strings.
-* `neq(v1, v2)`: `v1 != v2` The opposite of `eq`.
-* `cmp(v1, comparator, v2)`: Pass in a comparison string, and it'll call
-  the corresponding function above.  `"==="` and `"!=="` do simple
-  string comparison, but are included for completeness.  Throws if an
-  invalid comparison string is provided.
-* `compare(v1, v2)`: Return `0` if `v1 == v2`, or `1` if `v1` is greater, or `-1` if
-  `v2` is greater.  Sorts in ascending order if passed to `Array.sort()`.
-* `rcompare(v1, v2)`: The reverse of `compare`.  Sorts an array of versions
-  in descending order when passed to `Array.sort()`.
-* `compareBuild(v1, v2)`: The same as `compare` but considers `build` when two versions
-  are equal.  Sorts in ascending order if passed to `Array.sort()`.
-* `compareLoose(v1, v2)`: Short for `compare(v1, v2, { loose: true })`.
-* `diff(v1, v2)`: Returns the difference between two versions by the release type
-  (`major`, `premajor`, `minor`, `preminor`, `patch`, `prepatch`, or `prerelease`),
-  or null if the versions are the same.
-
-### Sorting
-
-* `sort(versions)`: Returns a sorted array of versions based on the `compareBuild` 
-  function.
-* `rsort(versions)`: The reverse of `sort`. Returns an array of versions based on
-  the `compareBuild` function in descending order.
-
-### Comparators
-
-* `intersects(comparator)`: Return true if the comparators intersect
-
-### Ranges
-
-* `validRange(range)`: Return the valid range or null if it's not valid.
-* `satisfies(version, range)`: Return true if the version satisfies the
-  range.
-* `maxSatisfying(versions, range)`: Return the highest version in the list
-  that satisfies the range, or `null` if none of them do.
-* `minSatisfying(versions, range)`: Return the lowest version in the list
-  that satisfies the range, or `null` if none of them do.
-* `minVersion(range)`: Return the lowest version that can match
-  the given range.
-* `gtr(version, range)`: Return `true` if the version is greater than all the
-  versions possible in the range.
-* `ltr(version, range)`: Return `true` if the version is less than all the
-  versions possible in the range.
-* `outside(version, range, hilo)`: Return true if the version is outside
-  the bounds of the range in either the high or low direction.  The
-  `hilo` argument must be either the string `'>'` or `'<'`.  (This is
-  the function called by `gtr` and `ltr`.)
-* `intersects(range)`: Return true if any of the range comparators intersect.
-* `simplifyRange(versions, range)`: Return a "simplified" range that
-  matches the same items in the `versions` list as the range specified.  Note
-  that it does *not* guarantee that it would match the same versions in all
-  cases, only for the set of versions provided.  This is useful when
-  generating ranges by joining together multiple versions with `||`
-  programmatically, to provide the user with something a bit more
-  ergonomic.  If the provided range is shorter in string-length than the
-  generated range, then that is returned.
-* `subset(subRange, superRange)`: Return `true` if the `subRange` range is
-  entirely contained by the `superRange` range.
-
-Note that, since ranges may be non-contiguous, a version might not be
-greater than a range, less than a range, *or* satisfy a range!  For
-example, the range `1.2 <1.2.9 || >2.0.0` would have a hole from `1.2.9`
-until `2.0.0`, so version `1.2.10` would not be greater than the
-range (because `2.0.1` satisfies, which is higher), nor less than the
-range (since `1.2.8` satisfies, which is lower), and it also does not
-satisfy the range.
-
-If you want to know if a version satisfies or does not satisfy a
-range, use the `satisfies(version, range)` function.
-
-### Coercion
-
-* `coerce(version, options)`: Coerces a string to semver if possible
-
-This aims to provide a very forgiving translation of a non-semver string to
-semver. It looks for the first digit in a string and consumes all
-remaining characters which satisfy at least a partial semver (e.g., `1`,
-`1.2`, `1.2.3`) up to the max permitted length (256 characters).  Longer
-versions are simply truncated (`4.6.3.9.2-alpha2` becomes `4.6.3`).  All
-surrounding text is simply ignored (`v3.4 replaces v3.3.1` becomes
-`3.4.0`).  Only text which lacks digits will fail coercion (`version one`
-is not valid).  The maximum length for any semver component considered for
-coercion is 16 characters; longer components will be ignored
-(`10000000000000000.4.7.4` becomes `4.7.4`).  The maximum value for any
-semver component is `Number.MAX_SAFE_INTEGER || (2**53 - 1)`; higher value
-components are invalid (`9999999999999999.4.7.4` is likely invalid).
-
-If the `options.rtl` flag is set, then `coerce` will return the right-most
-coercible tuple that does not share an ending index with a longer coercible
-tuple.  For example, `1.2.3.4` will return `2.3.4` in rtl mode, not
-`4.0.0`.  `1.2.3/4` will return `4.0.0`, because the `4` is not a part of
-any other overlapping SemVer tuple.
-
-If the `options.includePrerelease` flag is set, then the `coerce` result will contain
-prerelease and build parts of a version.  For example, `1.2.3.4-rc.1+rev.2`
-will preserve prerelease `rc.1` and build `rev.2` in the result.
-
-### Clean
-
-* `clean(version)`: Clean a string to be a valid semver if possible
-
-This will return a cleaned and trimmed semver version. If the provided
-version is not valid a null will be returned. This does not work for
-ranges.
-
-ex.
-* `s.clean(' = v 2.1.5foo')`: `null`
-* `s.clean(' = v 2.1.5foo', { loose: true })`: `'2.1.5-foo'`
-* `s.clean(' = v 2.1.5-foo')`: `null`
-* `s.clean(' = v 2.1.5-foo', { loose: true })`: `'2.1.5-foo'`
-* `s.clean('=v2.1.5')`: `'2.1.5'`
-* `s.clean('  =v2.1.5')`: `'2.1.5'`
-* `s.clean('      2.1.5   ')`: `'2.1.5'`
-* `s.clean('~1.0.0')`: `null`
-
-## Constants
-
-As a convenience, helper constants are exported to provide information about what `node-semver` supports:
-
-### `RELEASE_TYPES`
-
-- major
-- premajor
-- minor
-- preminor
-- patch
-- prepatch
-- prerelease
-
-```
-const semver = require('semver');
-
-if (semver.RELEASE_TYPES.includes(arbitraryUserInput)) {
-  console.log('This is a valid release type!');
-} else {
-  console.warn('This is NOT a valid release type!');
-}
-```
-
-### `SEMVER_SPEC_VERSION`
-
-2.0.0
-
-```
-const semver = require('semver');
-
-console.log('We are currently using the semver specification version:', semver.SEMVER_SPEC_VERSION);
-```
-
-## Exported Modules
-
-<!--
-TODO: Make sure that all of these items are documented (classes aren't,
-eg), and then pull the module name into the documentation for that specific
-thing.
--->
-
-You may pull in just the part of this semver utility that you need if you
-are sensitive to packing and tree-shaking concerns.  The main
-`require('semver')` export uses getter functions to lazily load the parts
-of the API that are used.
-
-The following modules are available:
-
-* `require('semver')`
-* `require('semver/classes')`
-* `require('semver/classes/comparator')`
-* `require('semver/classes/range')`
-* `require('semver/classes/semver')`
-* `require('semver/functions/clean')`
-* `require('semver/functions/cmp')`
-* `require('semver/functions/coerce')`
-* `require('semver/functions/compare')`
-* `require('semver/functions/compare-build')`
-* `require('semver/functions/compare-loose')`
-* `require('semver/functions/diff')`
-* `require('semver/functions/eq')`
-* `require('semver/functions/gt')`
-* `require('semver/functions/gte')`
-* `require('semver/functions/inc')`
-* `require('semver/functions/lt')`
-* `require('semver/functions/lte')`
-* `require('semver/functions/major')`
-* `require('semver/functions/minor')`
-* `require('semver/functions/neq')`
-* `require('semver/functions/parse')`
-* `require('semver/functions/patch')`
-* `require('semver/functions/prerelease')`
-* `require('semver/functions/rcompare')`
-* `require('semver/functions/rsort')`
-* `require('semver/functions/satisfies')`
-* `require('semver/functions/sort')`
-* `require('semver/functions/truncate')`
-* `require('semver/functions/valid')`
-* `require('semver/ranges/gtr')`
-* `require('semver/ranges/intersects')`
-* `require('semver/ranges/ltr')`
-* `require('semver/ranges/max-satisfying')`
-* `require('semver/ranges/min-satisfying')`
-* `require('semver/ranges/min-version')`
-* `require('semver/ranges/outside')`
-* `require('semver/ranges/simplify')`
-* `require('semver/ranges/subset')`
-* `require('semver/ranges/to-comparators')`
-* `require('semver/ranges/valid')`
-
+## 证据（全部可复现）
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 上游基线 | `npx tap`（改动前） | 53 套件 / 23,071 断言全绿 |
+| 改动后回归 | `npx tap` | **55 套件 / 23,326 断言全绿**（新增 255 条） |
+| 上游 82 条公开用例 | `test/ranges/exact-subset.js` 第 1 组 | **100% 一致**，无一偏离 |
+| 真实 npm 语料差分 | `node scripts/diff-real-corpus.cjs <目录...> test/fixtures/real-corpus-diff.json` | 3,808 个 `package.json`、3,320 个包名、92,315 组配对、182,492 次比较 → 一致 99.991%，**上游判错 16 处，逐条人工核验** |
+| 合成用例差分 | `node scripts/diff-synthetic.cjs 1500` | 上游过宽 18 处（反例 **18/18** 经 `satisfies` 复核）、过严 38 处、本实现 0 处漏检 |
+| 演示页验收 | `node scripts/verify-demo.cjs` | 真实浏览器 3 案例 × 6 断言 + 截图像素统计（1444 色 / 墨迹 7.6% / 三个语义色命中）→ **24/24** |
+| 打包可复现 | `node scripts/build-demo.cjs` 连跑两次 | `sha256=c9f26a3a…` 完全一致 |
+
+`scripts/` 里的三个差分脚本需要指向本机的 `node_modules` 目录，因此在 CI 上不跑（CI 跑完整测试与打包复现）。
+
+## 已知限制
+
+- 判定的是 **semver 范围语义**（`Range.test` 的口径，含「无 prerelease 比较器则不匹配 prerelease 版本」这条规则）。
+  它不等于「npm 实际会装哪个版本」——`dist-tag`、`npm:` 别名、`workspace:` / `catalog:` 协议、overrides 都不在范围内。
+- 判别点数量随两个范围的分支数增长。实测 10 个分支（`>=1.0.0` 对 `^1..^10` 并集）约 300 点，单次判定 < 1 ms；
+  没有做流式裁剪，分支数上千时点数会随之增长（未测）。
+- 上游 `loose` 模式只影响解析，不影响判定逻辑；本项目未对其单独验收。
+- 本项目**不修复上游**。`semver.subset()` 保持原样，上游 5 个 PR 的取舍由上游决定。
+- 真实语料中的 16 处差异全部属于上面四类写法；如果你的依赖范围里没有这些形态，本项目与上游结论一致。
+
+## 相对上游的改动
+
+- **改动**：`package.json`（name=subproof、version、`bin` 增加 `subproof`、repository/description/keywords）、`README.md`
+- **新增**：`ranges/exact-subset.js`、`bin/subproof.js`、`test/ranges/exact-subset.js`、`test/bin/subproof.js`、
+  `test/fixtures/exact-subset-real.json`、`test/fixtures/real-corpus-diff.json`、`scripts/`、`docs/`、`.gitattributes`
+- **未改动**：`classes/`、`functions/`、`internal/`、`ranges/` 下其余文件（含 `ranges/subset.js`）、`index.js`、上游 `test/`
+- 上游的 npm 发布类 workflow 在 fork 上无法工作（会向 `semver` 名字发布），替换为仅做验证的 `ci.yml`。
+
+## 演示页
+
+`docs/` 可直接作为 GitHub Pages 目录：判定 + 与上游结论对比 + release 区间条形图 + 5 个预置案例（含 4 个真实语料案例）。
+页面零网络请求；先跑 `node scripts/build-demo.cjs` 生成 `docs/subproof.bundle.js` 即可离线打开。
+
+## 许可证与来源
+
+- 上游 [`npm/node-semver`](https://github.com/npm/node-semver) 采用 **ISC**，本 fork 沿用同一许可证（`LICENSE` 逐字未改）。
+- 上游 README 原文保留在 `docs/UPSTREAM-README.md`；上游实现与测试全部保留在仓库中，可按提交历史逐条对比。

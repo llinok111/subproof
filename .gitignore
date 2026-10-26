@@ -9,6 +9,7 @@
 !/.eslintrc.js
 !/.eslintrc.local.*
 !/.git-blame-ignore-revs
+!/.gitattributes
 !/.github/
 !/.gitignore
 !/.npmrc

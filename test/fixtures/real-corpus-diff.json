@@ -1,0 +1,116 @@
+{
+  "generatedBy": "probe/real-diff.cjs",
+  "dirs": [
+    "E:/WorkBuddy-Work/workbuddy-github-2/_r5",
+    "E:/WorkBuddy-Work/workbuddy-github-2/_up-pino",
+    "E:/WorkBuddy-Work/workbuddy-github-2/_round18",
+    "E:/WorkBuddy-Work/workbuddy-github-2/_cand2"
+  ],
+  "packageJsonFiles": 3808,
+  "packages": 3320,
+  "pairs": 92315,
+  "comparisons": 182492,
+  "agree": 182476,
+  "upstreamTooLoose": 0,
+  "upstreamTooStrict": 16,
+  "agreeRate": 99.991,
+  "invalidRanges": 2138,
+  "findings": [
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "eslint",
+      "sub": ">=7.0.0",
+      "dom": "^6.0.0 || ^7.0.0 || >=8.0.0"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "eslint",
+      "sub": ">=6.0.0",
+      "dom": "^6.0.0 || ^7.0.0 || >=8.0.0"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "istanbul",
+      "sub": "0",
+      "dom": "*"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "@typescript/native-preview",
+      "sub": "7.0.0-dev.20260707.2",
+      "dom": "^7.0.0-dev.20260203.1"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "@typescript/native-preview",
+      "sub": "7.0.0-dev.20260609.1",
+      "dom": "^7.0.0-dev.20260203.1"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "@typescript/native-preview",
+      "sub": "7.0.0-dev.20260707.2",
+      "dom": "^7.0.0-dev.20260505.1"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "@typescript/native-preview",
+      "sub": "7.0.0-dev.20260609.1",
+      "dom": "^7.0.0-dev.20260505.1"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "jiti",
+      "sub": "^0.0.0",
+      "dom": "*"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "safer-buffer",
+      "sub": ">= 2.1.2 < 3.0.0",
+      "dom": ">= 2.1.2 < 3"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "safer-buffer",
+      "sub": ">= 2.1.2 < 3.0.0",
+      "dom": "^2.1.2"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "safer-buffer",
+      "sub": ">= 2.1.2 < 3.0.0",
+      "dom": "^2.1.0"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "safer-buffer",
+      "sub": ">= 2.1.2 < 3.0.0",
+      "dom": "^2.0.2"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "sse",
+      "sub": "^0.0.8",
+      "dom": "0.0.8"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "pkg-pr-new",
+      "sub": "^0.0.91",
+      "dom": "0.0.91"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "pkg-pr-new",
+      "sub": "^0.0.75",
+      "dom": "0.0.75"
+    },
+    {
+      "kind": "upstream-too-strict",
+      "pkg": "faucet",
+      "sub": "^0.0.1",
+      "dom": "0.0.1"
+    }
+  ]
+}

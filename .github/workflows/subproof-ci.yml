@@ -1,0 +1,50 @@
+# 本项目新增的验证流水线。上游自带的 workflow 均带 `repository_owner == 'npm'`
+# 门禁（在 fork 上不运行），因此不去改动它们。
+name: subproof
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test - node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+        node:
+          - 18
+          - 20
+          - 22
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Upstream + new tests
+        run: npx tap --no-coverage
+
+      - name: Lint
+        run: npm run eslint
+
+      - name: Demo bundle is reproducible
+        run: |
+          node scripts/build-demo.cjs
+          node -e "const c=require('crypto'),f=require('fs');const p='docs/subproof.bundle.js';const a=c.createHash('sha256').update(f.readFileSync(p)).digest('hex');require('child_process').execFileSync(process.execPath,['scripts/build-demo.cjs'],{stdio:'inherit'});const b=c.createHash('sha256').update(f.readFileSync(p)).digest('hex');if(a!==b){console.error('bundle not reproducible');process.exit(1)}console.log('bundle reproducible',a)"

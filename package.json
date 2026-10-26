@@ -1,7 +1,7 @@
 {
-  "name": "semver",
-  "version": "7.8.5",
-  "description": "The semantic version parser used by npm.",
+  "name": "subproof",
+  "version": "0.1.0",
+  "description": "Exact semver range containment with counterexamples (fork of npm/node-semver 7.8.5)",
   "main": "index.js",
   "scripts": {
     "test": "tap",
@@ -17,15 +17,17 @@
     "@npmcli/eslint-config": "^7.0.0",
     "@npmcli/template-oss": "5.0.0",
     "benchmark": "^2.1.4",
+    "esbuild": "^0.28.2",
     "tap": "^16.0.0"
   },
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/npm/node-semver.git"
+    "url": "git+https://github.com/llinok111/subproof.git"
   },
   "bin": {
-    "semver": "bin/semver.js"
+    "semver": "bin/semver.js",
+    "subproof": "bin/subproof.js"
   },
   "files": [
     "bin/",
@@ -49,7 +51,6 @@
   "engines": {
     "node": ">=10"
   },
-  "author": "GitHub Inc.",
   "templateOSS": {
     "//@npmcli/template-oss": "This file is partially managed by @npmcli/template-oss. Edits may be overwritten.",
     "version": "5.0.0",
@@ -74,5 +75,16 @@
       "/benchmarks"
     ],
     "publish": "true"
+  },
+  "keywords": [
+    "semver",
+    "range",
+    "subset",
+    "containment",
+    "audit"
+  ],
+  "homepage": "https://github.com/llinok111/subproof#readme",
+  "bugs": {
+    "url": "https://github.com/llinok111/subproof/issues"
   }
 }

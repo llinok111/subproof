@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>subproof — semver 范围包含判定</title>
+<style>
+  :root {
+    --ink: #1A1A1A;
+    --body: #333333;
+    --muted: #666666;
+    --line: #E0E0E0;
+    --surface: #F0F0F0;
+    --paper: #FFFFFF;
+    --accent: #000080;
+    --ok: #008000;
+    --bad: #DC143C;
+    --track-sub: #000080;
+    --track-dom: #666666;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--paper); color: var(--body); }
+  body {
+    font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 20px 64px; }
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 28px; }
+  h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -0.02em; color: var(--ink); font-weight: 700; }
+  .lede { margin: 0 0 8px; font-size: 14px; color: var(--body); }
+  .meta { margin: 0; font-size: 12px; color: var(--muted); letter-spacing: 0.01em; }
+  h2 { margin: 0 0 12px; font-size: 14px; color: var(--ink); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .panel {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 3px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); letter-spacing: 0.04em; margin-bottom: 4px; }
+  input[type="text"] {
+    width: 100%; padding: 9px 11px; font: 14px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 3px;
+  }
+  input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .field { margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 13px; padding: 8px 18px; border-radius: 3px; cursor: pointer;
+    background: var(--body); color: var(--paper); border: 1px solid var(--body);
+  }
+  button:hover { background: var(--ink); border-color: var(--ink); }
+  button.ghost { background: var(--paper); color: var(--body); border-color: var(--line); }
+  button.ghost:hover { background: var(--surface); color: var(--ink); }
+  .err { font-size: 13px; color: var(--bad); }
+  .verdict { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 10px; }
+  .verdict.ok { color: var(--ok); }
+  .verdict.bad { color: var(--bad); }
+  dl { margin: 0; display: grid; grid-template-columns: 140px 1fr; gap: 6px 16px; font-size: 13px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--ink); word-break: break-all; }
+  .hint { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+  .chart { display: grid; gap: 10px; }
+  .lane { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: center; }
+  .lane-label { font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
+  .track { position: relative; height: 26px; background: var(--surface); border-radius: 2px; }
+  .seg { position: absolute; top: 4px; height: 18px; border-radius: 2px; }
+  .seg.sub { background: var(--track-sub); }
+  .seg.dom { background: var(--track-dom); }
+  .seg-label {
+    position: absolute; top: 26px; font-size: 11px; color: var(--muted);
+    white-space: nowrap; transform: translateX(-2px);
+  }
+  .axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-left: 102px; margin-top: 4px; }
+  .divergence {
+    border-left: 3px solid var(--bad); padding: 10px 14px; background: var(--surface);
+    border-radius: 0 3px 3px 0; margin-top: 12px; font-size: 13px;
+  }
+  .divergence strong { color: var(--bad); }
+  .agree { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; }
+  .presets button { font-size: 12px; padding: 6px 12px; }
+  .preset-note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  footer a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+  code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; background: var(--surface); padding: 1px 5px; border-radius: 2px; }
+  @media (max-width: 620px) {
+    .lane { grid-template-columns: 1fr; gap: 4px; }
+    .axis { margin-left: 0; }
+    dl { grid-template-columns: 1fr; gap: 2px; }
+    dt { margin-top: 8px; }
+    .wrap { padding: 24px 14px 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>subproof</h1>
+    <p class="lede">判断一个 semver 范围是否完整落在另一个范围里。给结论，也给出反例版本。</p>
+    <p class="meta">基于 npm/node-semver 7.8.5（ISC）· 判定器不修改上游任何一行代码</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="field">
+        <label for="sub">子范围 sub</label>
+        <input id="sub" type="text" spellcheck="false" value=">=1 <3">
+      </div>
+      <div class="field">
+        <label for="dom">超范围 dom</label>
+        <input id="dom" type="text" spellcheck="false" value=">=1 <2 || >=2 <3">
+      </div>
+      <div class="row">
+        <button id="run">判定</button>
+        <span id="err" class="err" role="alert"></span>
+      </div>
+    </section>
+
+    <section class="panel" id="result" hidden>
+      <div class="verdict" id="verdict"></div>
+      <dl>
+        <dt>sub</dt><dd id="r-sub"></dd>
+        <dt>dom</dt><dd id="r-dom"></dd>
+        <dt>判别点</dt><dd id="r-points"></dd>
+        <dt id="r-witness-key">反例版本</dt><dd id="r-witness"></dd>
+      </dl>
+    </section>
+
+    <section class="panel" id="compare" hidden>
+      <h2>与上游 subset() 对比</h2>
+      <dl>
+        <dt>subproof</dt><dd id="c-exact"></dd>
+        <dt>semver.subset()</dt><dd id="c-upstream"></dd>
+      </dl>
+      <div id="c-note"></div>
+    </section>
+
+    <section class="panel">
+      <h2>区间视图</h2>
+      <p class="hint">只画 release 版本区间；prerelease 规则由判定器单独处理。</p>
+      <div class="chart" id="chart"></div>
+      <div class="axis"><span id="ax-lo"></span><span id="ax-hi"></span></div>
+    </section>
+
+    <section class="panel">
+      <h2>预置案例</h2>
+      <div class="presets" id="presets"></div>
+      <p class="preset-note" id="preset-note"></p>
+    </section>
+  </main>
+
+  <footer>
+    <p>上游：<a href="https://github.com/npm/node-semver" rel="noopener">npm/node-semver</a>（ISC）。
+    本页所有判定在本机浏览器内完成，无网络请求。</p>
+  </footer>
+</div>
+
+<script src="subproof.bundle.js"></script>
+<script>
+(function () {
+  'use strict'
+  var S = window.__subproof
+  if (!S) {
+    document.getElementById('err').textContent = 'bundle 未加载：请先运行 node scripts/build-demo.mjs'
+    return
+  }
+
+  var el = function (id) { return document.getElementById(id) }
+  var subInput = el('sub')
+  var domInput = el('dom')
+
+  function num (version) {
+    var v = new S.SemVer(version)
+    // prerelease 排在 release 之前：给一个小偏移，保证条形图上位置正确
+    var base = v.major * 10000 + v.minor * 100 + v.patch
+    return v.prerelease.length ? base - 0.5 : base
+  }
+
+  function segments (rangeStr) {
+    var r
+    try { r = new S.Range(rangeStr) } catch (e) { throw e }
+    var out = []
+    for (var i = 0; i < r.set.length; i++) {
+      var set = r.set[i]
+      var lo = null; var hi = null; var exact = null
+      for (var j = 0; j < set.length; j++) {
+        var c = set[j]
+        if (!(c.semver instanceof S.SemVer)) continue
+        if (c.operator === '>' || c.operator === '>=') lo = c.semver.version
+        else if (c.operator === '<' || c.operator === '<=') hi = c.semver.version
+        else exact = c.semver.version
+      }
+      out.push({ lo: lo, hi: hi, exact: exact })
+    }
+    return out
+  }
+
+  function renderChart () {
+    var chart = el('chart')
+    chart.textContent = ''
+    var subStr = subInput.value.trim() || '*'
+    var domStr = domInput.value.trim() || '*'
+    var a, b
+    try {
+      a = segments(subStr)
+      b = segments(domStr)
+    } catch (e) {
+      chart.textContent = '无法解析，跳过区间视图'
+      return
+    }
+
+    // 横轴范围：取两端极值，空范围时退回 0..3
+    var values = []
+    a.concat(b).forEach(function (s) {
+      if (s.lo) values.push(num(s.lo))
+      if (s.hi) values.push(num(s.hi))
+      if (s.exact) values.push(num(s.exact))
+    })
+    var min = values.length ? Math.min.apply(null, values) : 0
+    var max = values.length ? Math.max.apply(null, values) : 30000
+    if (max - min < 100) max = min + 100
+    var pad = (max - min) * 0.05
+    min = Math.max(0, min - pad)
+    max = max + pad
+
+    function lane (label, segs, cls) {
+      var wrap = document.createElement('div')
+      wrap.className = 'lane'
+      var lab = document.createElement('div')
+      lab.className = 'lane-label'
+      lab.textContent = label
+      var track = document.createElement('div')
+      track.className = 'track'
+      segs.forEach(function (s) {
+        var left; var right
+        if (s.exact) {
+          var n = num(s.exact)
+          left = n - 12; right = n + 12
+        } else {
+          left = s.lo ? num(s.lo) : min
+          right = s.hi ? num(s.hi) : max
+        }
+        var div = document.createElement('div')
+        div.className = 'seg ' + cls
+        div.style.left = ((left - min) / (max - min) * 100) + '%'
+        div.style.width = Math.max(0.8, (right - left) / (max - min) * 100) + '%'
+        track.appendChild(div)
+      })
+      wrap.appendChild(lab)
+      wrap.appendChild(track)
+      chart.appendChild(wrap)
+    }
+
+    lane('sub', a, 'sub')
+    lane('dom', b, 'dom')
+
+    function fmt (n) {
+      if (n < 0) n = 0
+      var major = Math.floor(n / 10000)
+      var minor = Math.floor((n - major * 10000) / 100)
+      var patch = Math.round(n - major * 10000 - minor * 100)
+      return major + '.' + minor + '.' + Math.max(0, patch)
+    }
+    el('ax-lo').textContent = '≈ ' + fmt(min)
+    el('ax-hi').textContent = '≈ ' + fmt(max)
+  }
+
+  function render (subStr, domStr) {
+    var err = el('err')
+    err.textContent = ''
+    var exact
+    var upstream
+    try {
+      exact = S.explainSubset(subStr, domStr)
+    } catch (e) {
+      err.textContent = '范围无法解析：' + e.message
+      el('result').hidden = true
+      el('compare').hidden = true
+      return
+    }
+    try {
+      upstream = S.subset(subStr, domStr)
+    } catch (e) {
+      upstream = null
+    }
+
+    el('result').hidden = false
+    var v = el('verdict')
+    v.className = 'verdict ' + (exact.subset ? 'ok' : 'bad')
+    v.textContent = exact.subset ? '✓ 是子集：sub 的每个版本都在 dom 内' : '✗ 不是子集：存在反例'
+    el('r-sub').textContent = subStr
+    el('r-dom').textContent = domStr
+    el('r-points').textContent = exact.points + ' 个边界版本'
+    if (exact.subset) {
+      el('r-witness-key').textContent = '反例版本'
+      el('r-witness').textContent = '无'
+    } else {
+      el('r-witness-key').textContent = '反例版本'
+      el('r-witness').textContent = exact.witness
+    }
+
+    el('compare').hidden = false
+    el('c-exact').textContent = exact.subset ? 'true（是子集）' : 'false（否）'
+    el('c-upstream').textContent = upstream === null ? '解析失败' : (upstream ? 'true' : 'false')
+    var note = el('c-note')
+    note.textContent = ''
+    if (upstream !== null && upstream !== exact.subset) {
+      var d = document.createElement('div')
+      d.className = 'divergence'
+      var strong = document.createElement('strong')
+      strong.textContent = '两者结论不同。'
+      d.appendChild(strong)
+      var span = document.createElement('span')
+      span.textContent = upstream
+        ? ' 上游判为子集，但 ' + exact.witness + ' 满足 sub 且不满足 dom —— 上游过宽。'
+        : ' 上游判为不是子集，但判别点网格上找不到反例 —— 上游过严。'
+      d.appendChild(span)
+      note.appendChild(d)
+    } else if (upstream !== null) {
+      var p = document.createElement('div')
+      p.className = 'agree'
+      p.textContent = '两者结论一致。'
+      note.appendChild(p)
+    }
+
+    renderChart()
+  }
+
+  function run () {
+    var subStr = subInput.value.trim() || '*'
+    var domStr = domInput.value.trim() || '*'
+    render(subStr, domStr)
+  }
+
+  el('run').addEventListener('click', run)
+  subInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') run() })
+  domInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') run() })
+
+  var presets = [
+    { name: '并集覆盖', sub: '>=1 <3', dom: '>=1 <2 || >=2 <3', note: '两段拼起来刚好盖住一整段，上游 #703 至今未修。' },
+    { name: '真实 istanbul', sub: '0', dom: '*', note: '来自真实 package.json：0.x 全在 * 之内。' },
+    { name: '真实 eslint', sub: '>=7.0.0', dom: '^6.0.0 || ^7.0.0 || >=8.0.0', note: '三个分支首尾相接，覆盖 >=7.0.0。' },
+    { name: '真实 sse', sub: '^0.0.8', dom: '0.0.8', note: '零主版本 caret 只含一个 release 版本。' },
+    { name: '普通反例', sub: '>=1.0.0', dom: '>=1.0.0 <2.0.0', note: '2.0.0 满足 sub 但不满足 dom。' }
+  ]
+  var presetBox = el('presets')
+  presets.forEach(function (p) {
+    var b = document.createElement('button')
+    b.className = 'ghost'
+    b.type = 'button'
+    b.textContent = p.name
+    b.addEventListener('click', function () {
+      subInput.value = p.sub
+      domInput.value = p.dom
+      el('preset-note').textContent = p.note
+      run()
+    })
+    presetBox.appendChild(b)
+  })
+
+  // 支持 #sub=...&dom=... 直接定位到某个案例（便于分享与自动化验收）
+  try {
+    var params = new URLSearchParams(location.hash.replace(/^#/, ''))
+    if (params.get('sub')) subInput.value = params.get('sub')
+    if (params.get('dom')) domInput.value = params.get('dom')
+  } catch (e) { /* 忽略非法 hash */ }
+
+  run()
+})()
+</script>
+</body>
+</html>

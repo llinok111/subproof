@@ -1,0 +1,6 @@
+# 仓库内所有文本文件以 LF 存储，检出也用 LF —— 避免 Windows 上 Edit 工具写回 CRLF
+# 造成工作副本与索引长期不一致（表现为「某个文件反复显示有差异」）。
+* text=auto eol=lf
+
+*.png binary
+*.zip binary
